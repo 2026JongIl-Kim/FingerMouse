@@ -30,14 +30,16 @@ import androidx.core.content.ContextCompat
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
 
     private class Sample(val t: Long, val x: Float, val y: Float)
 
     private companion object {
-        const val PINCH_ON = 0.30f   // 이 값보다 작으면 '집음'
-        const val PINCH_OFF = 0.50f  // 이 값보다 커지면 '놓음'
+        const val DEF_PINCH_ON = 0.28f   // 이 값보다 작으면 '집음'
+        const val DEF_PINCH_OFF = 0.38f  // 이 값보다 커지면 '놓음'
+        const val DEF_MARGIN = 0.15f
         val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
     }
@@ -51,7 +53,10 @@ class MainActivity : AppCompatActivity() {
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     @Volatile private var useFront = true
-    private var margin = 0.15f
+    private var margin = DEF_MARGIN
+    private var pinchOn = DEF_PINCH_ON
+    private var pinchOff = DEF_PINCH_OFF
+    private val prefs by lazy { getSharedPreferences("fingermouse", MODE_PRIVATE) }
 
     private val filterX = OneEuroFilter(1.5f, 0.02f)
     private val filterY = OneEuroFilter(1.5f, 0.02f)
@@ -73,6 +78,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        margin = prefs.getFloat("margin", DEF_MARGIN)
+        pinchOn = prefs.getFloat("pinchOn", DEF_PINCH_ON)
+        pinchOff = prefs.getFloat("pinchOff", DEF_PINCH_OFF)
         buildUi()
         setContentView(root)
 
@@ -160,25 +168,29 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.argb(150, 0, 0, 0))
             setPadding(dp(16), dp(8), dp(16), dp(12))
         }
-        val label = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            text = "민감도 (오른쪽일수록 작은 손동작으로 이동)"
+        addSlider(
+            panel, 0.05f, 25, margin,
+            { "이동 민감도 (오른쪽일수록 작은 손동작으로 이동)" }
+        ) { v ->
+            margin = v
+            overlay.margin = v
+            overlay.invalidate()
+            prefs.edit().putFloat("margin", v).apply()
         }
-        val seek = SeekBar(this).apply {
-            max = 25
-            progress = 10
+        addSlider(
+            panel, 0.10f, 40, pinchOn,
+            { "붙임 기준 ${"%.2f".format(it)} (작을수록 꽉 붙여야 클릭)" }
+        ) { v ->
+            pinchOn = v
+            prefs.edit().putFloat("pinchOn", v).apply()
         }
-        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
-                margin = 0.05f + p / 100f
-                overlay.margin = margin
-                overlay.invalidate()
-            }
-
-            override fun onStartTrackingTouch(s: SeekBar?) {}
-            override fun onStopTrackingTouch(s: SeekBar?) {}
-        })
+        addSlider(
+            panel, 0.20f, 60, pinchOff,
+            { "놓음 기준 ${"%.2f".format(it)} (작을수록 빨리 초록으로)" }
+        ) { v ->
+            pinchOff = v
+            prefs.edit().putFloat("pinchOff", v).apply()
+        }
         val flip = Button(this).apply {
             text = "카메라 전환 (전면/후면)"
             setOnClickListener {
@@ -188,8 +200,6 @@ class MainActivity : AppCompatActivity() {
                 startCamera()
             }
         }
-        panel.addView(label)
-        panel.addView(seek)
         panel.addView(flip)
         root.addView(panel, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM))
 
@@ -197,6 +207,38 @@ class MainActivity : AppCompatActivity() {
         overlay = OverlayView(this)
         overlay.margin = margin
         root.addView(overlay, FrameLayout.LayoutParams(MATCH, MATCH))
+    }
+
+    /** 라벨 + 슬라이더 한 쌍을 panel에 추가. 값 = base + 진행도/100 */
+    private fun addSlider(
+        panel: LinearLayout,
+        base: Float,
+        maxProgress: Int,
+        initial: Float,
+        labelOf: (Float) -> String,
+        onChange: (Float) -> Unit
+    ) {
+        val label = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            text = labelOf(initial)
+        }
+        val seek = SeekBar(this).apply {
+            max = maxProgress
+            progress = ((initial - base) * 100f).roundToInt().coerceIn(0, maxProgress)
+        }
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                val v = base + p / 100f
+                label.text = labelOf(v)
+                onChange(v)
+            }
+
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) {}
+        })
+        panel.addView(label)
+        panel.addView(seek)
     }
 
     // ───────────────────────── 카메라 ─────────────────────────
@@ -283,7 +325,7 @@ class MainActivity : AppCompatActivity() {
         history.addLast(Sample(now, sx, sy))
         while (history.size > 1 && now - history.first().t > 300) history.removeFirst()
 
-        if (!pinching && r.pinchRatio < PINCH_ON) {
+        if (!pinching && r.pinchRatio < pinchOn) {
             // 집는 동작 중 손끝이 흔들리므로, 약 150ms 전 위치를 클릭 지점으로 사용
             val anchor = history.firstOrNull { now - it.t <= 150 } ?: history.last()
             offX = anchor.x - sx
@@ -292,7 +334,7 @@ class MainActivity : AppCompatActivity() {
             lastPtrX = anchor.x
             lastPtrY = anchor.y
             sendTouch(MotionEvent.ACTION_DOWN, anchor.x, anchor.y)
-        } else if (pinching && r.pinchRatio > PINCH_OFF) {
+        } else if (pinching && r.pinchRatio > maxOf(pinchOff, pinchOn + 0.05f)) {
             sendTouch(MotionEvent.ACTION_UP, lastPtrX, lastPtrY)
             pinching = false
             offX = 0f
@@ -314,7 +356,9 @@ class MainActivity : AppCompatActivity() {
         overlay.points = r.points
         overlay.invalidate()
 
-        status.text = if (pinching) "👌 집는 중 (클릭/드래그)" else "☝ 추적 중 · 엄지+검지를 붙이면 클릭"
+        val gap = "%.2f".format(r.pinchRatio)
+        status.text = if (pinching) "👌 집는 중 (클릭/드래그)\n손가락 간격 $gap"
+        else "☝ 추적 중 · 엄지+검지를 붙이면 클릭\n손가락 간격 $gap"
     }
 
     /** 포인터 위치에 가짜 터치 이벤트를 보내 버튼/슬라이더/드래그를 조작합니다. */
