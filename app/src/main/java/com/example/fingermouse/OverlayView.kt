@@ -16,6 +16,13 @@ class OverlayView(context: Context) : View(context) {
     var points: FloatArray? = null
     var margin = 0.15f
 
+    /** false면 미니맵을 그리지 않음 (전체 화면 모드) */
+    var showMap = true
+
+    /** true면 pointerX/Y를 '화면 절대 좌표'로 보고 이 뷰의 화면상 위치만큼 보정 */
+    var screenCoords = false
+    private val loc = IntArray(2)
+
     private val d = resources.displayMetrics.density
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -34,7 +41,11 @@ class OverlayView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        if (showMap) drawMap(canvas)
+        drawPointer(canvas)
+    }
 
+    private fun drawMap(canvas: Canvas) {
         // 미니맵: 카메라가 보는 손 위치. 노란 사각형 = 화면 전체로 매핑되는 영역
         val mw = 96f * d
         val mh = 128f * d
@@ -53,10 +64,19 @@ class OverlayView(context: Context) : View(context) {
             }
         }
 
-        if (showPointer) {
-            fill.color = if (pinching) Color.argb(220, 255, 60, 60) else Color.argb(200, 60, 220, 120)
-            canvas.drawCircle(pointerX, pointerY, 16f * d, fill)
-            canvas.drawCircle(pointerX, pointerY, 16f * d, ring)
+    }
+
+    private fun drawPointer(canvas: Canvas) {
+        if (!showPointer) return
+        var ox = 0f
+        var oy = 0f
+        if (screenCoords) {
+            getLocationOnScreen(loc)
+            ox = loc[0].toFloat()
+            oy = loc[1].toFloat()
         }
+        fill.color = if (pinching) Color.argb(220, 255, 60, 60) else Color.argb(200, 60, 220, 120)
+        canvas.drawCircle(pointerX - ox, pointerY - oy, 16f * d, fill)
+        canvas.drawCircle(pointerX - ox, pointerY - oy, 16f * d, ring)
     }
 }

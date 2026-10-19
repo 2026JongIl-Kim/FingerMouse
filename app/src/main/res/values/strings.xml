@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_description">손가락 끝을 따라 포인터를 화면에 표시하고, 엄지와 검지를 붙이면 그 위치를 대신 터치(탭/드래그)합니다.</string>
+</resources>

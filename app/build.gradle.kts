@@ -48,6 +48,7 @@ dependencies {
     implementation("androidx.camera:camera-camera2:$camerax")
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("androidx.camera:camera-view:$camerax")
+    implementation("androidx.lifecycle:lifecycle-service:2.8.4")
 
     implementation("com.google.mediapipe:tasks-vision:0.10.14")
 }

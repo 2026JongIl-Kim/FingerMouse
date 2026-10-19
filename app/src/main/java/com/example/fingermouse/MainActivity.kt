@@ -5,7 +5,11 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Matrix
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.widget.Toast
 import android.os.SystemClock
 import android.util.Size
 import android.view.Gravity
@@ -81,6 +85,7 @@ class MainActivity : AppCompatActivity() {
         margin = prefs.getFloat("margin", DEF_MARGIN)
         pinchOn = prefs.getFloat("pinchOn", DEF_PINCH_ON)
         pinchOff = prefs.getFloat("pinchOff", DEF_PINCH_OFF)
+        useFront = prefs.getBoolean("useFront", true)
         buildUi()
         setContentView(root)
 
@@ -195,11 +200,17 @@ class MainActivity : AppCompatActivity() {
             text = "카메라 전환 (전면/후면)"
             setOnClickListener {
                 useFront = !useFront
+                prefs.edit().putBoolean("useFront", useFront).apply()
                 filterX.reset()
                 filterY.reset()
                 startCamera()
             }
         }
+        val full = Button(this).apply {
+            text = "▶ 다른 화면에서도 사용 (전체 화면 모드)"
+            setOnClickListener { startFullMode() }
+        }
+        panel.addView(full)
         panel.addView(flip)
         root.addView(panel, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM))
 
@@ -369,6 +380,67 @@ class MainActivity : AppCompatActivity() {
         ev.source = InputDevice.SOURCE_TOUCHSCREEN
         root.dispatchTouchEvent(ev)
         ev.recycle()
+    }
+
+    // ───────────────────────── 전체 화면 모드 ─────────────────────────
+
+    private var askedNotif = false
+
+    private val notifLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            askedNotif = true
+            startFullMode()
+        }
+
+    /** 다른 앱 위에서도 포인터가 뜨고 터치가 되는 모드를 켭니다. */
+    private fun startFullMode() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+            return
+        }
+        if (PointerAccessibilityService.instance == null) {
+            Toast.makeText(
+                this,
+                "접근성 설정에서 '손가락 마우스'를 켠 뒤, 이 앱으로 돌아와 다시 눌러 주세요",
+                Toast.LENGTH_LONG
+            ).show()
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 && !askedNotif &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+
+        // 이 화면의 카메라를 먼저 놓아야 서비스가 카메라를 쓸 수 있습니다.
+        try {
+            ProcessCameraProvider.getInstance(this).get().unbindAll()
+        } catch (_: Exception) {
+        }
+        overlay.showPointer = false
+        overlay.invalidate()
+
+        ContextCompat.startForegroundService(this, Intent(this, TrackingService::class.java))
+        moveTaskToBack(true)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 앱으로 돌아오면 전체 화면 모드는 끄고, 이 화면의 테스트 모드로 복귀
+        if (TrackingService.instance != null) {
+            TrackingService.stop()
+            if (tracker != null && ContextCompat.checkSelfPermission(
+                    this, Manifest.permission.CAMERA
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
+                startCamera()
+            }
+        }
     }
 
     override fun onDestroy() {
